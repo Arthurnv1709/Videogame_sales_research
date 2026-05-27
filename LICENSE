@@ -1,0 +1,81 @@
+"""Pré-processa vgsales.csv -> docs/data.js (dados agregados para os 7 gráficos)."""
+import json
+import pandas as pd
+from pathlib import Path
+
+df = pd.read_csv("vgsales.csv")
+
+# Q1 - Top 10 jogos
+top10 = df.nlargest(10, "Global_Sales")[["Name", "Platform", "Global_Sales"]]
+q1 = [{"name": r.Name, "platform": r.Platform, "sales": round(r.Global_Sales, 2)}
+      for r in top10.itertuples()]
+
+# Q2 - Vendas por gênero
+genero = df.groupby("Genre")["Global_Sales"].sum().sort_values(ascending=False)
+q2 = [{"genre": g, "sales": round(v, 1)} for g, v in genero.items()]
+
+# Q3 - Evolução por ano
+ano = df.dropna(subset=["Year"]).groupby("Year")["Global_Sales"].sum().sort_index()
+q3 = [{"year": int(y), "sales": round(v, 2)} for y, v in ano.items()]
+
+# Q4 - Top 10 plataformas
+plat = df.groupby("Platform")["Global_Sales"].sum().sort_values(ascending=False).head(10)
+fabricante = {
+    "PS2": "Sony", "PS3": "Sony", "PS": "Sony", "PS4": "Sony", "PSP": "Sony", "PSV": "Sony",
+    "X360": "Microsoft", "XB": "Microsoft", "XOne": "Microsoft",
+    "Wii": "Nintendo", "DS": "Nintendo", "GBA": "Nintendo", "GB": "Nintendo",
+    "3DS": "Nintendo", "NES": "Nintendo", "SNES": "Nintendo", "N64": "Nintendo",
+    "GC": "Nintendo", "WiiU": "Nintendo",
+    "PC": "PC",
+}
+q4 = [{"platform": p, "sales": round(v, 1), "maker": fabricante.get(p, "Outro")}
+      for p, v in plat.items()]
+
+# Q5 - Vendas por região
+q5 = [
+    {"region": "América do Norte", "sales": round(df["NA_Sales"].sum(), 1)},
+    {"region": "Europa",           "sales": round(df["EU_Sales"].sum(), 1)},
+    {"region": "Japão",            "sales": round(df["JP_Sales"].sum(), 1)},
+    {"region": "Outras regiões",   "sales": round(df["Other_Sales"].sum(), 1)},
+]
+
+# Q6 - Top 10 publishers
+pub = (df.dropna(subset=["Publisher"])
+         .groupby("Publisher")["Global_Sales"].sum()
+         .sort_values(ascending=False).head(10))
+q6 = [{"publisher": p, "sales": round(v, 1)} for p, v in pub.items()]
+
+# Q7 - Heatmap gênero x região (%)
+regions = {"NA_Sales": "NA", "EU_Sales": "EU", "JP_Sales": "JP", "Other_Sales": "Outras"}
+mat = df.groupby("Genre")[list(regions.keys())].sum().rename(columns=regions)
+mat_pct = mat.div(mat.sum(axis=0), axis=1) * 100
+mat_pct = mat_pct.sort_values("NA", ascending=False)
+q7 = {
+    "genres": list(mat_pct.index),
+    "regions": list(mat_pct.columns),
+    "values": [[round(mat_pct.iloc[i, j], 1) for j in range(len(mat_pct.columns))]
+               for i in range(len(mat_pct))],
+}
+
+# Metadados gerais
+meta = {
+    "totalGames": int(len(df)),
+    "yearMin": int(df["Year"].min()),
+    "yearMax": int(df["Year"].max()),
+    "totalSales": round(float(df["Global_Sales"].sum()), 1),
+    "platforms": int(df["Platform"].nunique()),
+    "publishers": int(df["Publisher"].nunique()),
+    "genres": int(df["Genre"].nunique()),
+}
+
+payload = {
+    "meta": meta, "q1": q1, "q2": q2, "q3": q3, "q4": q4,
+    "q5": q5, "q6": q6, "q7": q7,
+}
+
+Path("docs").mkdir(exist_ok=True)
+content = "window.VGSALES = " + json.dumps(payload, ensure_ascii=False, indent=2) + ";\n"
+Path("docs/data.js").write_text(content, encoding="utf-8")
+
+print(f"docs/data.js gerado ({len(content):,} bytes)")
+print(f"Meta: {meta}")
